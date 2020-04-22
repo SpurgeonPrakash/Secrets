@@ -7,12 +7,14 @@ const session = require('express-session');
 const passport = require("passport");
 const passportLocalMongoose = require("passport-local-mongoose");
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const FacebookStrategy = require('passport-facebook').Strategy;
 const findOrCreate = require('mongoose-findorcreate');
 
 // const bcrypt = require("bcrypt");
 // const encrypt = require("mongoose-encryption");
 // const md5 = require("md5");
 // const saltRounds = 10;
+const defaultSecret = [{secret: "This is my First Secret"}];
 
 const app = express();
 
@@ -35,7 +37,9 @@ mongoose.set("useCreateIndex", true);
 const userSchema = new mongoose.Schema({
   email: String,
   password: String,
-  googleId: String
+  googleId: String,
+  facebookId: String,
+  secret: String
 });
 
 userSchema.plugin(passportLocalMongoose);
@@ -69,6 +73,19 @@ passport.use(new GoogleStrategy({
   }
 ));
 
+passport.use(new FacebookStrategy({
+    clientID: process.env.FACEBOOK_CLIENT_ID,
+    clientSecret: process.env.FACEBOOK_CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/facebook/secrets"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    console.log(profile);
+    User.findOrCreate({ facebookId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
+
 app.get("/", (req,res) => {
   res.render("home");
 });
@@ -80,6 +97,15 @@ app.get("/auth/google/secrets",
   function(req, res) {
     // Successful authentication, redirect Secrets page.
     res.redirect("/secrets");
+});
+
+app.get('/auth/facebook',passport.authenticate('facebook'));
+
+app.get('/auth/facebook/secrets',
+  passport.authenticate('facebook', { failureRedirect: '/login' }),
+  function(req, res) {
+    // Successful authentication, redirect home.
+    res.redirect('/secrets');
   });
 
 app.get("/login", (req,res) => {
@@ -91,17 +117,36 @@ app.get("/register", (req,res) => {
 });
 
 app.get("/secrets", (req,res) => {
-  if(req.isAuthenticated()) {
-    res.render("secrets");
-  } else {
-    res.redirect("/login");
-  }
+  // if(req.isAuthenticated()) {
+  //   res.render("secrets");
+  // } else {
+  //   res.redirect("/login");
+  // }
+  User.find({"secret": {$ne: null}}, (err,foundUsers) => {
+    if(err){
+      console.log(err);
+    } else {
+      if(foundUsers) {
+        res.render("secrets", {usersWithSecrets : foundUsers});
+      } else {
+        res.render("secrets", {usersWithSecrets: {}})
+      }
+    }
+  });
 });
 
 app.get("/logout", (req,res) => {
   //removing sessions and cookies here using passports logout method
   req.logout();
   res.redirect("/");
+});
+
+app.get("/submit", (req,res) => {
+  if(req.isAuthenticated()) {
+    res.render("submit");
+  } else {
+    res.redirect("/login");
+  }
 });
 
 app.post("/register", (req,res) => {
@@ -135,6 +180,24 @@ app.post("/login", (req,res) => {
     }
   });
 
+});
+
+app.post("/submit", (req,res) => {
+  const submittedSecret = req.body.secret;
+
+  console.log(req.user);
+  User.findById(req.user.id, (err,foundUser) => {
+    if(err) {
+      console.log(err);
+    } else {
+      if(foundUser) {
+        foundUser.secret = submittedSecret;
+        foundUser.save(() => {
+          res.redirect("/secrets");
+        });
+      }
+    }
+  });
 });
 
 //password encryption using bcrypt
